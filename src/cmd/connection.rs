@@ -1,7 +1,9 @@
 use bytes::{Bytes, BytesMut, Buf};
 use tokio::net::TcpStream;
 use mini_redis::{Frame, Result};
+use mini_redis::frame::Error::Incomplete;
 use tokio::io::AsyncReadExt;
+use std::io::Cursor;
 
 enum Frame {
     Simple(String),
@@ -74,5 +76,37 @@ impl Connection {
         -> Result<()>
     {
         // 具体实现
+    }
+
+    // 帧解析
+    fn parse_frame(&mut self)
+    -> Result<Option<Frame>>
+    {
+        // 创建 `T: Buf` 类型
+        let mut buf = Cursor::new(&self.buffer[..]);
+
+        // 检查是否读取了足够解析出一个帧的数据
+        match Frame::check(&mut buf) {
+            Ok(_) => {
+                // 获取组成该帧的字节数
+                let len = buf.position() as usize;
+
+                // 在解析开始之前，重置内部的游标位置
+                buf.set_position(0);
+
+                // 解析帧
+                let frame = Frame::parse(&mut buf)?;
+
+                // 解析完成，将缓冲区该帧的数据移除
+                self.buffer.advance(len);
+
+                // 返回解析出的帧
+                Ok(Some(frame))
+            }
+            // 缓冲区的数据不足以解析出一个完整的帧
+            Err(Incomplete) => Ok(None),
+            // 遇到一个错误
+            Err(e) => Err(e.into()),
+        }
     }
 }
