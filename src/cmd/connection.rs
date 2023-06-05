@@ -2,7 +2,7 @@ use bytes::{Bytes, BytesMut, Buf};
 use tokio::net::TcpStream;
 use mini_redis::{Frame, Result};
 use mini_redis::frame::Error::Incomplete;
-use tokio::io::AsyncReadExt;
+use tokio::io::{self, AsyncWriteExt};
 use std::io::Cursor;
 
 enum Frame {
@@ -15,27 +15,15 @@ enum Frame {
 }
 
 pub struct Connection {
-    stream: TcpStream,
-    buffer: Vec<u8>,
-    cursor: usize,
+    stream: BufWriter<TcpStream>,
+    buffer: BytesMut,
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream) -> Connection {
-        Connection {
-            stream,
-            // 4kb 大小的缓冲区
-            buffer: vec![0; 4096],
-            cursor: 0,
-        }
-    }
-}   
 
-impl Connection {
     pub fn new(stream: TcpStream) -> Connection {
         Connection {
-            stream,
-            // 分配一个缓冲区，具有4kb的缓冲长度
+            stream: BufWriter::new(stream),
             buffer: BytesMut::with_capacity(4096),
         }
     }
@@ -74,9 +62,40 @@ impl Connection {
     /// 将帧写入到连接中
     pub async fn write_frame(&mut self, frame: &Frame)
         -> Result<()>
-    {
-        // 具体实现
-    }
+        {
+            match frame {
+                Frame::Simple(val) => {
+                    self.stream.write_u8(b'+').await?;
+                    self.stream.write_all(val.as_bytes()).await?;
+                    self.stream.write_all(b"\r\n").await?;
+                }
+                Frame::Error(val) => {
+                    self.stream.write_u8(b'-').await?;
+                    self.stream.write_all(val.as_bytes()).await?;
+                    self.stream.write_all(b"\r\n").await?;
+                }
+                Frame::Integer(val) => {
+                    self.stream.write_u8(b':').await?;
+                    self.write_decimal(*val).await?;
+                }
+                Frame::Null => {
+                    self.stream.write_all(b"$-1\r\n").await?;
+                }
+                Frame::Bulk(val) => {
+                    let len = val.len();
+        
+                    self.stream.write_u8(b'$').await?;
+                    self.write_decimal(len as u64).await?;
+                    self.stream.write_all(val).await?;
+                    self.stream.write_all(b"\r\n").await?;
+                }
+                Frame::Array(_val) => unimplemented!(),
+            }
+        
+            self.stream.flush().await;
+        
+            Ok(())
+        }
 
     // 帧解析
     fn parse_frame(&mut self)
