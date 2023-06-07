@@ -17,15 +17,21 @@ async fn publish() -> mini_redis::Result<()> {
 async fn subscribe() -> mini_redis::Result<()> {
     let client = client::connect("127.0.0.1:6379").await?;
     let subscriber = client.subscribe(vec!["numbers".to_string()]).await?;
+    // let messages = subscriber
+    // .into_stream()
+    // .filter(|msg| match msg {
+    //     Ok(msg) if msg.content.len() == 1 => true,
+    //     _ => false,
+    // })
+    // .map(|msg| msg.unwrap().content)
+    // .take(3);
     let messages = subscriber
-    .into_stream()
-    .filter(|msg| match msg {
-        Ok(msg) if msg.content.len() == 1 => true,
-        _ => false,
-    })
-    .map(|msg| msg.unwrap().content)
-    .take(3);
-
+        .into_stream()
+        .filter_map(|msg| match msg {
+            Ok(msg) if msg.content.len() == 1 => Some(msg.content),
+            _ => None,
+        })
+        .take(3);
     tokio::pin!(messages);
 
     while let Some(msg) = messages.next().await {
